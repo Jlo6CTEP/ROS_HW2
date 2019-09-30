@@ -1,0 +1,5 @@
+<?xml version="1.0" ?>
+<robot name="yefan" xmlns:xacro="http://ros.org/wiki/xacro">
+  <xacro:include filename="$(find my_robot)/urdf/yefan.xacro"/>
+  <xacro:yefan_macro/>
+</robot>
