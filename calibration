@@ -1,0 +1,259 @@
+import pickle
+
+from numpy import array, loadtxt, pi, arctan, \
+    arccos, arctan2, random, concatenate, asarray, zeros, hstack, vstack,\
+    newaxis, eye as n_eye
+from numpy.linalg import inv
+from sympy import Matrix, sin, cos, eye, symbols, pprint, simplify, \
+    BlockMatrix, diff, atan2, sqrt, Piecewise, MatrixSymbol, Array, \
+    lambdify
+
+from sympy import pi as sympi
+
+random.seed(1)
+
+EXP_COUNT = 30
+
+l1_len = 346
+l2_len = 324
+l3_len = 312
+l4_len = 1075
+l5_len = 225
+l6_len = 1280
+l7_len = 215
+
+lengths = [l1_len, l2_len, l3_len, l4_len, l5_len, l6_len, l7_len]
+
+e_linear_sym = \
+symbols('el_1 el_2 el_3 el_4 el_5 el_6 el_7 el_8 el_9 el_10 '
+        'el_11 el_12 el_13 el_14')
+
+e_angular_sym = \
+symbols('ea_1 ea_2 ea_3 ea_4 ea_5 ea_6 ea_7 ea_8 ea_9 ea_10 ea_11 ea_12 ea_13')
+
+e_all_sym = list(e_linear_sym + e_angular_sym)
+
+el_1, el_2, el_3, el_4, el_5, el_6, el_7, el_8, el_9, el_10, el_11, el_12, \
+el_13, el_14 = e_linear_sym
+
+ea_1, ea_2, ea_3, ea_4, ea_5, ea_6, ea_7, ea_8, \
+ea_9, ea_10, ea_11, ea_12, ea_13 = e_angular_sym
+
+r = MatrixSymbol('r', 4, 4)
+
+def tilda(p):
+    return Matrix([[0, - p[2], p[1]],
+                   [p[2], 0, -p[0]],
+                   [-p[2], p[0], 0]])
+
+def r_z(angle):
+    return Matrix([[cos(angle), -sin(angle),    0,  0],
+                   [sin(angle), cos(angle),     0,  0],
+                   [0,          0,              1,  0],
+                   [0, 0, 0, 1]])
+
+
+def r_y(angle):
+    return Matrix([[cos(angle), 0, sin(angle), 0],
+                   [0,          1, 0,          0],
+                   [-sin(angle),0, cos(angle), 0],
+                   [0,          0, 0,          1]])
+
+
+def r_x(angle):
+    return Matrix([[1, 0,          0,           0],
+                   [0, cos(angle), -sin(angle), 0],
+                   [0, sin(angle), cos(angle),  0],
+                   [0, 0,          0,           1]])
+
+
+def shift_by_vector(shift):
+    matrix = eye(4)
+    matrix[0:3, 3] = shift
+    return matrix
+
+
+def t_x(shift):
+    return shift_by_vector([shift, 0, 0])
+
+
+def t_y(shift):
+    return shift_by_vector([0, shift, 0])
+
+
+def t_z(shift):
+    return shift_by_vector([0, 0, shift])
+
+
+q1, q2, q3, q4, q5, q6, l1, l2, l3, l4, l5, l6, l7 = \
+    symbols('q1 q2 q3 q4 q5 q6 l1 l2 l3, l4, l5, l6 l7')
+
+angles = [q1, q2, q3, q4, q5, q6]
+lengths_sym = [l1, l2, l3, l4, l5, l6, l7]
+
+e_linear = random.uniform(0, 2, 14)
+e_angular = random.uniform(1, 3, 13) / 180 * pi
+
+e_all = list(concatenate([e_linear, e_angular]))
+
+theoretical = []
+real = []
+
+
+T = (
+    t_z(l1) *
+    r_z(q1) * t_z(l2) * t_x(l3) *
+    r_y(q2) * t_z(l4) *
+    r_y(q3) * t_z(l5) * t_x(l6) *
+    r_x(q4) *
+    r_y(q5) *
+    r_x(q6) * t_x(l7))
+
+T_base = (shift_by_vector([el_1, el_2, l1 + l2 + el_3]))
+
+T_tool = (shift_by_vector([l7 + el_4, el_5, el_6])
+          * r_x(ea_1) * r_y(ea_2) * r_z(ea_3))
+
+
+T_err = (
+    r_z(q1) * t_x(l3 + el_7) * t_y(el_8) * r_x(ea_4) *
+    r_y(q2 + ea_5) * t_z(l4 + el_9) * r_x(ea_6) * r_z(ea_7) *
+    r_y(q3 + ea_8) * t_x(l6 + el_10) * t_z(l5 + el_11) * r_x(ea_9) *
+    r_x(q4 + ea_10) * t_y(el_12) * t_z(el_13) * r_z(ea_11) *
+    r_y(q5 + ea_12) * t_z(el_14) * r_z(ea_13) *
+    r_x(q6))
+
+configurations = asarray([
+                  random.uniform(-3.14, 3.14, EXP_COUNT),
+                  random.uniform(-1.0472, 1.32645, EXP_COUNT),
+                  random.uniform(-1.83259, 1.8726, EXP_COUNT),
+                  random.uniform(-3.14, 3.14, EXP_COUNT),
+                  random.uniform(-2.18166, 2.18166, EXP_COUNT),
+                  random.uniform(-3.14, 3.14, EXP_COUNT)]).T
+
+T_num = lambdify(angles + lengths_sym, T, "numpy")
+t_robot = lambdify(angles + lengths_sym + e_all_sym, T_err, "numpy")
+
+t_robot_tool_x = lambdify(angles + lengths_sym + e_all_sym,
+                          T_err * T_tool * t_x(100))
+t_robot_tool_y = lambdify(angles + lengths_sym + e_all_sym,
+                          T_err * T_tool * t_y(100))
+t_robot_tool_z = lambdify(angles + lengths_sym + e_all_sym,
+                          T_err * T_tool * t_z(100))
+
+a_sum_one = None
+a_sum_two = None
+
+for i in range(EXP_COUNT):
+    print('Angles ', [f'{x:.2f}' for x in configurations[i]])
+    print('Real case ',
+          [f'{x:.2f}' for x in t_robot(*list(configurations[i]) + lengths + e_all)[:3, 3]])
+    print('Ideal case ',
+          [f'{x:.2f}' for x in t_robot(*list(configurations[i]) + lengths + [0] * 27)[:3, 3]])
+
+for i in range(EXP_COUNT):
+    print(i)
+    exp = T_num(*list(configurations[i]) + lengths)
+
+    diff_tool_1 = t_robot_tool_x(*list(configurations[i]) + lengths + e_all) -\
+                  t_robot_tool_x(*list(configurations[i]) + lengths + [0]*27)
+
+    diff_tool_2 = t_robot_tool_y(*list(configurations[i]) + lengths + e_all) -\
+                  t_robot_tool_y(*list(configurations[i]) + lengths + [0] * 27)
+
+    diff_tool_3 = t_robot_tool_z(*list(configurations[i]) + lengths + e_all) -\
+                  t_robot_tool_z(*list(configurations[i]) + lengths + [0] * 27)
+
+    a = vstack(
+        [hstack([n_eye(3), tilda(exp[:3, 3]), exp[:3, :3],
+                 zeros([3, 3]), zeros([3, 3])]),
+
+         hstack([n_eye(3), tilda(exp[:3, 3]), zeros([3, 3]),
+                 exp[:3, :3], zeros([3, 3])]),
+
+         hstack([n_eye(3), tilda(exp[:3, 3]), zeros([3, 3]),
+                 zeros([3, 3]), exp[:3, :3]])])
+
+    a_dot_at = a.T.dot(a)
+    a_dot_dp = a.T.dot(vstack([diff_tool_1[:3, 3, newaxis],
+                                diff_tool_2[:3, 3, newaxis],
+                                diff_tool_3[:3, 3, newaxis]]))
+
+    a_sum_one = a_sum_one + a_dot_at if a_sum_one is not None else a_dot_at
+    a_sum_two = a_sum_two + a_dot_dp if a_sum_two is not None else a_dot_dp
+
+
+f = inv(a_sum_one.astype(dtype=float)).dot(a_sum_two.astype(dtype=float))
+
+print(f)
+#f = inv(jabobian_sum_1.astype(dtype=float)).dot(jabobian_sum_2.astype(dtype=float))
+
+tbase = eye(4)
+tbase[:3, 3] = f[:3]
+
+ttool_1 = eye(4)
+ttool_1[:3, 3] = f[6:9]
+
+ttool_2 = eye(4)
+ttool_2[:3, 3] = f[9:12]
+
+ttool_3 = eye(4)
+ttool_3[:3, 3] = f[12:15]
+
+
+
+x, y, z = (T_err * T_tool * ttool_1)[:3, 3]
+jabobian_1 = Matrix([[diff(x, l) for l in e_all_sym[3:]],
+                    [diff(y, l) for l in e_all_sym[3:]],
+                    [diff(z, l) for l in e_all_sym[3:]]])
+
+x, y, z = (T_err * T_tool * ttool_2)[:3, 3]
+
+jabobian_2 = Matrix([[diff(x, l) for l in e_all_sym[3:]],
+                    [diff(y, l) for l in e_all_sym[3:]],
+                    [diff(z, l) for l in e_all_sym[3:]]])
+
+x, y, z = (T_err * T_tool * ttool_3)[:3, 3]
+
+jabobian_3 = Matrix([[diff(x, l) for l in e_all_sym[3:]],
+                    [diff(y, l) for l in e_all_sym[3:]],
+                    [diff(z, l) for l in e_all_sym[3:]]])
+
+jabobian_num_1 = lambdify(angles + lengths_sym + e_all_sym,
+                          jabobian_1, "numpy")
+jabobian_num_2 = lambdify(angles + lengths_sym + e_all_sym,
+                          jabobian_2, "numpy")
+jabobian_num_3 = lambdify(angles + lengths_sym + e_all_sym,
+                          jabobian_3, "numpy")
+
+transform_1 = lambdify(angles + lengths_sym + e_all_sym,
+                          T_err * T_tool * ttool_1, "numpy")
+transform_2 = lambdify(angles + lengths_sym + e_all_sym,
+                          T_err * T_tool * ttool_2, "numpy")
+transform_3 = lambdify(angles + lengths_sym + e_all_sym,
+                          T_err * T_tool * ttool_3, "numpy")
+
+j_sum1, j_sum2 =[], []
+
+for x in range(EXP_COUNT):
+    j1 = jabobian_num_1(*list(configurations[i]) + lengths + e_all)
+    j2 = jabobian_num_2(*list(configurations[i]) + lengths + e_all)
+    j3 = jabobian_num_3(*list(configurations[i]) + lengths + e_all)
+
+    diff_tool_1 = t_robot_tool_x(*list(configurations[i]) + lengths + e_all) -\
+                  transform_1(*list(configurations[i]) + lengths + e_all)
+    diff_tool_2 = t_robot_tool_y(*list(configurations[i]) + lengths + e_all) -\
+                  transform_2(*list(configurations[i]) + lengths + e_all)
+    diff_tool_3 = t_robot_tool_z(*list(configurations[i]) + lengths + e_all) -\
+                  transform_3(*list(configurations[i]) + lengths + e_all)
+
+    j_sum1.append(j1.T.dot(j1) + j2.T.dot(j2) + j1.T.dot(j3))
+
+    j_sum2.append(j1.T.dot(diff_tool_1[:3, 3, newaxis]) +
+                  j1.T.dot(diff_tool_2[:3, 3, newaxis]) +
+                  j1.T.dot(diff_tool_3[:3, 3, newaxis]))
+
+print(sum(j_sum1))
+f = inv(sum(j_sum1).astype(dtype=float)).dot(sum(j_sum2).astype(dtype=float))
+
+print(f)
