@@ -1,0 +1,294 @@
+import pickle
+from math import floor, ceil
+
+from numpy import array, sqrt, arctan2, cos, sin, eye, arctan, pi, arccos, \
+    loadtxt, unwrap, sign, tan, empty, zeros, cross, asarray, arccos, \
+    zeros_like, concatenate, vstack, arange
+from numpy.linalg import inv, norm
+
+from matplotlib import pyplot as plt
+
+l1 = 670
+l2 = 312
+l3 = 1075
+l4 = 225
+l5 = 1280
+l6 = 215
+
+[670, 312, 1075, 225, 1280, 215]
+
+A_J_MAX = 1
+V_J_MAX = 1
+
+A_C_MAX = 1
+V_C_MAX = 1
+
+FREQ = 100
+
+QUANTUM = 1 / FREQ
+
+
+def estimate_time_p2p(d_q):
+    tau = V_J_MAX / A_J_MAX
+    if tau * V_J_MAX < d_q:
+        return True, tau, d_q / V_J_MAX - tau
+    else:
+        return False, sqrt(d_q / A_J_MAX)
+
+
+def estimate_time_lin(dx):
+    tau = V_C_MAX / A_C_MAX
+    if tau * V_C_MAX < dx:
+        return True, tau, dx / V_C_MAX - tau
+    else:
+        return False, sqrt(dx / A_C_MAX)
+
+
+def calculate_euler(r):
+    if r[0][0] == 1:
+        return array([arctan2(r[2][1], r[1][1]), 0, 0])
+    elif r[0][0] == -1:
+        return array([arctan2(-r[2][1], r[1][1]), 0, 0])
+    elif r[0][0] >= 0:
+        return array((arctan2(-r[1][0], r[2][0]),
+                      arctan2(sqrt(r[1][0] ** 2 + r[2][0] ** 2), r[0][0]),
+                      arctan2(-r[0][1], -r[0][2])))
+    else:
+        return array((arctan2(r[1][0], +r[2][0]),
+                      arctan2(sqrt(r[1][0] ** 2 + r[2][0] ** 2), r[0][0]),
+                      arctan2(r[0][1], r[0][2])))
+
+
+def r_z(angle):
+    return array([[cos(angle), -sin(angle), 0, 0],
+                  [sin(angle), cos(angle), 0, 0],
+                  [0, 0, 1, 0],
+                  [0, 0, 0, 1]])
+
+
+def r_y(angle):
+    return array([[cos(angle), 0, sin(angle), 0],
+                  [0, 1, 0, 0],
+                  [-sin(angle), 0, cos(angle), 0],
+                  [0, 0, 0, 1]])
+
+
+def r_x(angle):
+    return array([[1, 0, 0, 0],
+                  [0, cos(angle), -sin(angle), 0],
+                  [0, sin(angle), cos(angle), 0],
+                  [0, 0, 0, 1]])
+
+
+def shift_by_vector(shift):
+    matrix = eye(4)
+    matrix[0:3, 3] = shift
+    return matrix
+
+
+def t_x(shift):
+    return shift_by_vector([shift, 0, 0])
+
+
+def t_y(shift):
+    return shift_by_vector([0, shift, 0])
+
+
+def t_z(shift):
+    return shift_by_vector([0, 0, shift])
+
+
+def fk(q1, q2, q3, q4, q5, q6):
+    return (
+            t_z(l1) @
+            r_z(q1) @ t_x(l2) @
+            r_y(q2) @ t_z(l3) @
+            r_y(q3) @ t_z(l4) @ t_x(l5) @
+            r_x(q4) @
+            r_y(q5) @
+            r_x(q6) @ t_x(l6)
+    )
+
+
+def rk(t):
+    pos = t[0:3, 3] - t[0:3, 0] * l6
+
+    for_simple = sqrt(l5 ** 2 + l4 ** 2)
+
+    q1 = arctan2(pos[1], pos[0])
+    y, x = sqrt(pos[0] ** 2 + pos[1] ** 2) - l2, pos[2] - l1
+
+    q2 = (pi / 2 - sign(y) * arctan(x / y) -
+          arccos((-for_simple ** 2 + l3 ** 2 + x ** 2 + y ** 2) /
+                 (2 * l3 * sqrt(x ** 2 + y ** 2))))
+
+    q3 = (pi / 2 - arccos((for_simple ** 2 + l3 ** 2 - x ** 2 - y ** 2) /
+                          (2 * for_simple * l3)) + arctan(l4 / l5))
+
+    frame = (t_z(l1) @ r_z(q1) @ t_x(l2) @
+             r_y(q2) @ t_z(l3) @ r_y(q3) @ t_z(l4) @ t_x(l5))
+
+    q4, q5, q6 = calculate_euler(inv(frame[0:3, 0:3]) @ t[0:3, 0:3]) + \
+                 array([pi, 0, pi])
+
+    return array([q1, q2, q3, q4, q5, q6])
+
+
+def p2p(rot1, rot2):
+    p2 = rk(rot2)
+    p1 = rk(rot1)
+
+    d_q = unwrap(p2 - p1)
+    # find longest time
+    t_est = estimate_time_p2p(max(abs(d_q)))
+    n_quanta = ceil(t_est[1] * FREQ)
+
+    # pproximate with trapeze or triangle
+    time = [QUANTUM * n_quanta, QUANTUM * n_quanta] \
+        if not t_est[0] else \
+        QUANTUM * array([n_quanta, ceil(t_est[2] * FREQ), n_quanta])
+
+    # calculate speeds by integration
+    speed = d_q / (sum(time[:2]) if len(time) != 2 else time[0])
+    accel = speed / time[0]
+
+    speeds = zeros([int(sum(time) * FREQ) + 1, 6])
+
+    speeds[n_quanta:-(n_quanta + 1)] = array(speed)
+
+    # calculate anglesby integration
+    for x in range(1, int(time[0] * FREQ) + 1):
+        speeds[x] = speeds[x - 1] + accel * QUANTUM
+        speeds[-(x + 1)] = speeds[-x] + accel * QUANTUM
+
+    angles = zeros([int(sum(time) * FREQ) + 1, 6])
+    angles[0, :] = p1
+    angles[-1, :] = p2
+
+    for x in range(1, angles.shape[0] - 1):
+        angles[x] = angles[x - 1] + speeds[x - 1] * QUANTUM
+
+    return speeds, angles
+
+
+def from_angles(x, y, z, rx, ry, rz):
+    return r_x(rx) @ r_y(ry) @ r_z(rz) @ shift_by_vector([x, y, z])
+
+
+def lin(rot1, rot2):
+    coord_1 = rot1[:3, 3]
+    coord_2 = rot2[:3, 3]
+    p2 = rk(rot2)
+    p1 = rk(rot1)
+    # find travel time
+    t_est = estimate_time_lin(sqrt(sum((coord_2 - coord_1) ** 2)) / 1000)
+
+    dx = (coord_2 - coord_1)
+    # quantify time
+    n_quanta = ceil(t_est[1] * FREQ)
+
+    time = [QUANTUM * n_quanta, QUANTUM * n_quanta] \
+        if not t_est[0] else \
+        QUANTUM * array([n_quanta, ceil(t_est[2] * FREQ), n_quanta])
+    # calculate max speeds and accels
+    speed = dx / (sum(time[:2]) if len(time) != 2 else time[0])
+    speed = array([*speed, 0, 0, 0])
+    accel = speed / time[0]
+
+    # calculate cartesian speeds
+    speeds_c = zeros([int(sum(time) * FREQ) + 1, 6])
+    speeds_c[n_quanta:-(n_quanta + 1)] = array(speed)
+    for x in range(1, int(time[0] * FREQ) + 1):
+        speeds_c[x] = speeds_c[x - 1] + accel * QUANTUM
+        speeds_c[-(x + 1)] = speeds_c[-x] + accel * QUANTUM
+
+    angles = zeros([int(sum(time) * FREQ) + 1, 6])
+    angles[0, :] = p1
+    angles[-1, :] = p2
+
+    speeds_j = zeros_like(speeds_c)
+    # calculate joint angles
+    for x in range(1, angles.shape[0] - 1):
+        jabobian = inv_jacobian(*angles[x - 1])
+        speeds_j[x] = jabobian @ speeds_c[x]
+        angles[x] = angles[x - 1] + speeds_j[x] * QUANTUM
+
+    return speeds_j, angles
+
+
+def inv_jacobian(q1, q2, q3, q4, q5, q6):
+    t0 = eye(4)
+    t0[:3, 3] = 0
+    t1 = t0 @ t_z(l1) @ r_z(q1) @ t_x(l2)
+    t2 = t1 @ r_y(q2) @ t_z(l3)
+    t3 = t2 @ r_y(q3) @ t_z(l4) @ t_x(l5)
+    t4 = t3 @ r_x(q4)
+    t5 = t4 @ r_y(q5)
+    t6 = t2 @ r_y(q3) @ t_z(l4) @ r_x(q4) @ t_x(l5) @ r_y(q5) @ t_x(l6) @ r_x(
+        q6)
+
+    j_columns = \
+        [asarray(
+            [*cross(t_i[:3, axis], t6[:3, 3] - t_i[:3, 3]).T,
+             *t_i[:3, axis].T])
+            for t_i, axis in zip([t0, t1, t2, t3, t4, t5], [2, 1, 1, 0, 1, 0])]
+
+    return inv(vstack(j_columns).T)
+
+
+# movements
+first = p2p(fk(*[0, 0, 0, 0, 0.1, 0]),
+            fk(*[0.302, 0.123, 0.121, 0.312, 0.1, 0.131]))
+second = lin(fk(*[0.302, 0.123, 0.121, 0.312, 0.1, 0.131]),
+             fk(*[0.602, 0.223, 0.181, 0.212, 0.11, 0.231]))
+third = p2p(fk(*second[1][-2]), fk(*[0.302, 0.123, 0.121, 0.312, 0.1, 0.131]))
+fourth = lin(fk(*[0.302, 0.123, 0.121, 0.312, 0.1, 0.131]),
+             fk(*[0, 0, 0, 0, 0.1, 0]))
+
+a = concatenate([first[1], second[1][:-2], third[1], fourth[1][:-2]])
+a_s = concatenate([first[0], second[0][:-2], third[0], fourth[0][:-2]])
+
+speed1 = first[0]
+
+speed2 = second[0]
+addend2, speed2 = speed2[:5], speed2[5:]
+speed1[-5:] += addend2
+
+speed3 = third[0]
+addend3, speed3 = speed3[:5], speed3[5:]
+speed3[-5:] += addend2
+
+speed4 = fourth[0]
+addend4, speed4 = speed4[:5], speed4[5:]
+speed3[-5:] += addend2
+
+# speed profile
+b = concatenate([speed1, speed2, speed3, speed4])
+
+angles = zeros_like(b)
+
+# integrate
+for x in range(1, angles.shape[0]):
+    angles[x] = angles[x - 1] + b[x - 1] * QUANTUM
+
+
+x = arange(a_s.shape[0])
+
+accels = zeros_like(a_s)
+
+for f in range(1, accels.shape[0]):
+    accels[f] = (a_s[f]-a_s[f-1])/QUANTUM
+
+
+plt.plot(x, accels[:, 0], label='joint1')
+plt.plot(x, accels[:, 1], label='joint2')
+plt.plot(x, accels[:, 2], label='joint3')
+plt.plot(x, accels[:, 3], label='joint4')
+plt.plot(x, accels[:, 4], label='joint5')
+plt.plot(x, accels[:, 5], label='joint6')
+plt.legend()
+plt.ylabel('volts')
+plt.show()
+
+pickle.dump(a, open('nojunktions', 'wb'), protocol=2)
+pickle.dump(angles, open('junktions', 'wb'), protocol=2)
