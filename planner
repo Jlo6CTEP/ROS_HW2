@@ -103,7 +103,7 @@ def fk(q1, q2, q3, q4, q5, q6):
             t_z(l1) @
             r_z(q1) @ t_x(l2) @
             r_y(q2) @ t_z(l3) @
-            r_y(q3) @ t_z(l4) @ t_x(l5) @
+            r_y(-q3) @ t_z(l4) @ t_x(l5) @
             r_x(q4) @
             r_y(q5) @
             r_x(q6) @ t_x(l6)
@@ -122,11 +122,11 @@ def rk(t):
           arccos((-for_simple ** 2 + l3 ** 2 + x ** 2 + y ** 2) /
                  (2 * l3 * sqrt(x ** 2 + y ** 2))))
 
-    q3 = (pi / 2 - arccos((for_simple ** 2 + l3 ** 2 - x ** 2 - y ** 2) /
+    q3 = - (pi / 2 - arccos((for_simple ** 2 + l3 ** 2 - x ** 2 - y ** 2) /
                           (2 * for_simple * l3)) + arctan(l4 / l5))
 
     frame = (t_z(l1) @ r_z(q1) @ t_x(l2) @
-             r_y(q2) @ t_z(l3) @ r_y(q3) @ t_z(l4) @ t_x(l5))
+             r_y(q2) @ t_z(l3) @ r_y(-q3) @ t_z(l4) @ t_x(l5))
 
     q4, q5, q6 = calculate_euler(inv(frame[0:3, 0:3]) @ t[0:3, 0:3]) + \
                  array([pi, 0, pi])
@@ -171,19 +171,11 @@ def p2p(rot1, rot2):
     return speeds, angles
 
 
-def from_angles(x, y, z, rx, ry, rz):
-    return r_x(rx) @ r_y(ry) @ r_z(rz) @ shift_by_vector([x, y, z])
-
-
-def lin(rot1, rot2):
-    coord_1 = rot1[:3, 3]
-    coord_2 = rot2[:3, 3]
-    p2 = rk(rot2)
+def lin(rot1, dx):
     p1 = rk(rot1)
     # find travel time
-    t_est = estimate_time_lin(sqrt(sum((coord_2 - coord_1) ** 2)) / 1000)
+    t_est = estimate_time_lin(sqrt(sum(dx ** 2)) / 1000)
 
-    dx = (coord_2 - coord_1)
     # quantify time
     n_quanta = ceil(t_est[1] * FREQ)
 
@@ -204,11 +196,10 @@ def lin(rot1, rot2):
 
     angles = zeros([int(sum(time) * FREQ) + 1, 6])
     angles[0, :] = p1
-    angles[-1, :] = p2
 
     speeds_j = zeros_like(speeds_c)
     # calculate joint angles
-    for x in range(1, angles.shape[0] - 1):
+    for x in range(1, angles.shape[0]):
         jabobian = inv_jacobian(*angles[x - 1])
         speeds_j[x] = jabobian @ speeds_c[x]
         angles[x] = angles[x - 1] + speeds_j[x] * QUANTUM
@@ -237,16 +228,14 @@ def inv_jacobian(q1, q2, q3, q4, q5, q6):
 
 
 # movements
-first = p2p(fk(*[0, 0, 0, 0, 0.1, 0]),
-            fk(*[0.302, 0.123, 0.121, 0.312, 0.1, 0.131]))
-second = lin(fk(*[0.302, 0.123, 0.121, 0.312, 0.1, 0.131]),
-             fk(*[0.602, 0.223, 0.181, 0.212, 0.11, 0.231]))
-third = p2p(fk(*second[1][-2]), fk(*[0.302, 0.123, 0.121, 0.312, 0.1, 0.131]))
-fourth = lin(fk(*[0.302, 0.123, 0.121, 0.312, 0.1, 0.131]),
-             fk(*[0, 0, 0, 0, 0.1, 0]))
+first = p2p(fk(*[0, 0, 0, 0, 0.000001, 0]), fk(*[1, 0.5, 1, 0, 1, 0]))
+# pickle.dump(first[1], open('nojunktions', 'wb'), protocol=2)
+second = lin(fk(*first[1][-1]), array([100, 0, 0]))
+third = p2p(fk(*second[1][-1]), fk(*[0, 0, 0, 0, 0.5, 0]))
+fourth = lin(fk(*third[1][-1]), array([100, 0, 0]))
 
-a = concatenate([first[1], second[1][:-2], third[1], fourth[1][:-2]])
-a_s = concatenate([first[0], second[0][:-2], third[0], fourth[0][:-2]])
+a = concatenate([first[1], second[1], third[1], fourth[1]])
+a_s = concatenate([first[0], second[0], third[0], fourth[0]])
 
 speed1 = first[0]
 
@@ -280,14 +269,17 @@ for f in range(1, accels.shape[0]):
     accels[f] = (a_s[f]-a_s[f-1])/QUANTUM
 
 
-plt.plot(x, accels[:, 0], label='joint1')
-plt.plot(x, accels[:, 1], label='joint2')
-plt.plot(x, accels[:, 2], label='joint3')
-plt.plot(x, accels[:, 3], label='joint4')
-plt.plot(x, accels[:, 4], label='joint5')
-plt.plot(x, accels[:, 5], label='joint6')
+plt.plot(x, a[:, 0], label='joint1')
+plt.plot(x, a[:, 1], label='joint2')
+plt.plot(x, a[:, 2], label='joint3')
+plt.plot(x, a[:, 3], label='joint4')
+plt.plot(x, a[:, 4], label='joint5')
+plt.plot(x, a[:, 5], label='joint6')
+plt.title('Angles')
+plt.xlabel('Time, ticks')
+plt.ylabel('Angle, rad')
+
 plt.legend()
-plt.ylabel('volts')
 plt.show()
 
 pickle.dump(a, open('nojunktions', 'wb'), protocol=2)
